@@ -1,0 +1,147 @@
+name: Monitoring CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  D2_VERSION: '0.9.0'
+
+jobs:
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Scan for misconfigurations and committed secrets
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: misconfig,secret
+          severity: CRITICAL,HIGH
+          exit-code: '1'
+
+  validate:
+    name: Validate Configuration
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate Compose file, Prometheus and Alertmanager configuration
+        run: bash scripts/validate-config.sh
+
+  lint-dashboards:
+    name: Lint Grafana Dashboards
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate dashboard JSON and structure
+        run: bash scripts/validate-dashboards.sh
+
+  test-stack:
+    name: Test Monitoring Stack
+    runs-on: ubuntu-latest
+    needs: [validate, lint-dashboards]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Start monitoring stack
+        run: docker compose up -d
+
+      - name: Check services, rules, data sources and dashboards
+        run: bash scripts/smoke-test.sh
+
+      # Runs the import that the deploy job performs, against the local Grafana.
+      - name: Import dashboards through the Grafana API
+        run: |
+          service_account="$(curl -sf -u admin:admin -H 'Content-Type: application/json' \
+            -d '{"name": "ci-import", "role": "Admin"}' http://localhost:3000/api/serviceaccounts | jq -r '.id')"
+          GRAFANA_API_KEY="$(curl -sf -u admin:admin -H 'Content-Type: application/json' \
+            -d '{"name": "ci-import"}' "http://localhost:3000/api/serviceaccounts/$service_account/tokens" | jq -r '.key')"
+          echo "::add-mask::$GRAFANA_API_KEY"
+          export GRAFANA_API_KEY
+          GRAFANA_URL=http://localhost:3000 bash scripts/import-dashboards.sh
+
+      - name: Show service logs
+        if: failure()
+        run: docker compose logs --tail 100
+
+      - name: Cleanup
+        if: always()
+        run: docker compose down -v
+
+  docs:
+    name: Build Documentation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install MkDocs with the TechDocs and D2 plugins
+        run: pip install mkdocs-techdocs-core==1.7.1 mkdocs-d2-plugin==1.7.0
+
+      - name: Install D2
+        run: |
+          curl -fsSL "https://github.com/terrastruct/d2/releases/download/v${D2_VERSION}/d2-v${D2_VERSION}-linux-amd64.tar.gz" | tar -xz -C "$RUNNER_TEMP"
+          sudo install "$RUNNER_TEMP/d2-v${D2_VERSION}/bin/d2" /usr/local/bin/d2
+
+      - name: Build documentation
+        run: mkdocs build --strict
+
+  deploy-config:
+    name: Check Deployment Configuration
+    # Dashboards are deployed to the Grafana instance named by the GRAFANA_URL
+    # and GRAFANA_API_KEY repository secrets. Without them the deploy job is
+    # skipped.
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    outputs:
+      grafana: ${{ steps.check.outputs.grafana }}
+    steps:
+      - name: Check for Grafana credentials
+        id: check
+        env:
+          GRAFANA_URL: ${{ secrets.GRAFANA_URL }}
+          GRAFANA_API_KEY: ${{ secrets.GRAFANA_API_KEY }}
+        run: |
+          if [ -n "$GRAFANA_URL" ] && [ -n "$GRAFANA_API_KEY" ]; then
+            echo "grafana=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "grafana=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::The GRAFANA_URL and GRAFANA_API_KEY secrets are not set, so dashboards are not deployed."
+          fi
+
+  deploy:
+    name: Deploy Dashboards
+    runs-on: ubuntu-latest
+    needs: [test-stack, deploy-config]
+    if: needs.deploy-config.outputs.grafana == 'true'
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Import Grafana dashboards
+        env:
+          GRAFANA_URL: ${{ secrets.GRAFANA_URL }}
+          GRAFANA_API_KEY: ${{ secrets.GRAFANA_API_KEY }}
+        run: bash scripts/import-dashboards.sh

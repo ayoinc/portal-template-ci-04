@@ -1,0 +1,31 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: sample-monitoring
+  description: "The SRE team's \"eyes\" on production: monitoring for payments"
+  annotations:
+    backstage.io/techdocs-ref: dir:.
+    github.com/project-slug: example-org/sample-monitoring
+    prometheus.io/alert: sample-monitoring-alerts
+    grafana/dashboard-selector: sample-monitoring
+  tags:
+    - monitoring
+    - prometheus
+    - grafana
+    - application
+  links:
+    - url: "http://prometheus:9090"
+      title: Prometheus
+      icon: dashboard
+    - url: "http://grafana:3000"
+      title: Grafana
+      icon: dashboard
+    - url: "http://alertmanager:9093"
+      title: Alertmanager
+      icon: alert
+spec:
+  type: monitoring
+  lifecycle: production
+  owner: group:default/platform-team
+  providesApis: []
+  dependsOn: []

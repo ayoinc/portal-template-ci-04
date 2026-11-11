@@ -1,0 +1,26 @@
+site_name: "sample-monitoring"
+site_description: "The SRE team's \"eyes\" on production: monitoring for payments"
+
+nav:
+  - Home: index.md
+  - Alerts: alerts.md
+  - Dashboards: dashboards.md
+  - Runbooks: runbooks.md
+
+plugins:
+  - techdocs-core
+  - d2
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - tables
+
+validation:
+  links:
+    not_found: warn
+    anchors: warn
+    unrecognized_links: warn

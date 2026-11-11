@@ -1,0 +1,55 @@
+# Alertmanager configuration
+# Generated for: sample-monitoring
+
+global:
+  resolve_timeout: 5m
+
+route:
+  group_by: ['alertname', 'severity']
+  group_wait: 10s
+  group_interval: 10s
+  repeat_interval: 1h
+  receiver: 'default-receiver'
+  routes:
+    # Critical alerts - immediate escalation
+    - match:
+        severity: critical
+      receiver: 'critical-receiver'
+      group_wait: 0s
+      repeat_interval: 5m
+    
+    # Warning alerts
+    - match:
+        severity: warning
+      receiver: 'warning-receiver'
+      repeat_interval: 4h
+    
+    # Info alerts - batch them
+    - match:
+        severity: info
+      receiver: 'info-receiver'
+      group_wait: 5m
+      repeat_interval: 24h
+
+# Notification settings below come from the values entered when this stack
+# was created. The Slack webhook URL and PagerDuty key are credentials: to keep
+# them out of the repository, mount them as files and use "api_url_file" and
+# "service_key_file" instead.
+receivers:
+  - name: 'default-receiver'
+
+  - name: 'critical-receiver'
+
+  - name: 'warning-receiver'
+
+  - name: 'info-receiver'
+
+inhibit_rules:
+  # If a critical alert is firing, inhibit warnings for the same alertname
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal: ['alertname', 'instance']
+
+templates: []
